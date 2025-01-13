@@ -5,20 +5,21 @@ from torch.nn import Sequential as Seq
 
 import torch_geometric.typing
 from torch_geometric.nn import NNConv
-from torch_geometric.testing import is_full_test
+from torch_geometric.testing import is_full_test, withCUDA
 from torch_geometric.typing import SparseTensor
 from torch_geometric.utils import to_torch_coo_tensor
 
 
-def test_nn_conv():
-    x1 = torch.randn(4, 8)
-    x2 = torch.randn(2, 16)
-    edge_index = torch.tensor([[0, 1, 2, 3], [0, 0, 1, 1]])
-    value = torch.rand(edge_index.size(1), 3)
+@withCUDA
+def test_nn_conv(device):
+    x1 = torch.randn(4, 8, device=device)
+    x2 = torch.randn(2, 16, device=device)
+    edge_index = torch.tensor([[0, 1, 2, 3], [0, 0, 1, 1]], device=device)
+    value = torch.rand(edge_index.size(1), 3, device=device)
     adj1 = to_torch_coo_tensor(edge_index, value, size=(4, 4))
 
     nn = Seq(Lin(3, 32), ReLU(), Lin(32, 8 * 32))
-    conv = NNConv(8, 32, nn=nn)
+    conv = NNConv(8, 32, nn=nn).to(device)
     assert str(conv) == (
         'NNConv(8, 32, aggr=add, nn=Sequential(\n'
         '  (0): Linear(in_features=3, out_features=32, bias=True)\n'
@@ -36,20 +37,17 @@ def test_nn_conv():
         assert torch.allclose(conv(x1, adj2.t()), out)
 
     if is_full_test():
-        t = '(Tensor, Tensor, OptTensor, Size) -> Tensor'
-        jit = torch.jit.script(conv.jittable(t))
+        jit = torch.jit.script(conv)
         assert torch.allclose(jit(x1, edge_index, value), out)
         assert torch.allclose(jit(x1, edge_index, value, size=(4, 4)), out)
 
-    if is_full_test() and torch_geometric.typing.WITH_TORCH_SPARSE:
-        t = '(Tensor, SparseTensor, OptTensor, Size) -> Tensor'
-        jit = torch.jit.script(conv.jittable(t))
-        assert torch.allclose(jit(x1, adj2.t()), out)
+        if torch_geometric.typing.WITH_TORCH_SPARSE:
+            assert torch.allclose(jit(x1, adj2.t()), out)
 
     # Test bipartite message passing:
     adj1 = to_torch_coo_tensor(edge_index, value, size=(4, 2))
 
-    conv = NNConv((8, 16), 32, nn=nn)
+    conv = NNConv((8, 16), 32, nn=nn).to(device)
     assert str(conv) == (
         'NNConv((8, 16), 32, aggr=add, nn=Sequential(\n'
         '  (0): Linear(in_features=3, out_features=32, bias=True)\n'
@@ -74,16 +72,13 @@ def test_nn_conv():
         assert torch.allclose(conv((x1, None), adj2.t()), out2)
 
     if is_full_test():
-        t = '(OptPairTensor, Tensor, OptTensor, Size) -> Tensor'
-        jit = torch.jit.script(conv.jittable(t))
+        jit = torch.jit.script(conv)
         assert torch.allclose(jit((x1, x2), edge_index, value), out1)
         assert torch.allclose(jit((x1, x2), edge_index, value, size=(4, 2)),
                               out1)
         assert torch.allclose(jit((x1, None), edge_index, value, size=(4, 2)),
                               out2)
 
-    if is_full_test() and torch_geometric.typing.WITH_TORCH_SPARSE:
-        t = '(OptPairTensor, SparseTensor, OptTensor, Size) -> Tensor'
-        jit = torch.jit.script(conv.jittable(t))
-        assert torch.allclose(jit((x1, x2), adj2.t()), out1)
-        assert torch.allclose(jit((x1, None), adj2.t()), out2)
+        if torch_geometric.typing.WITH_TORCH_SPARSE:
+            assert torch.allclose(jit((x1, x2), adj2.t()), out1)
+            assert torch.allclose(jit((x1, None), adj2.t()), out2)

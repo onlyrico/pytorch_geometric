@@ -2,8 +2,12 @@ import pytest
 import torch
 
 from torch_geometric.data import Data, HeteroData
-from torch_geometric.testing import get_random_edge_index
-from torch_geometric.transforms import RandomLinkSplit
+from torch_geometric.testing import (
+    get_random_edge_index,
+    onlyFullTest,
+    onlyOnline,
+)
+from torch_geometric.transforms import RandomLinkSplit, ToSparseTensor
 from torch_geometric.utils import is_undirected, to_undirected
 
 
@@ -79,6 +83,20 @@ def test_random_link_split():
     assert train_data.edge_attr.size() == (3, 3)
     assert train_data.edge_label_index.size(1) == 6
     assert train_data.edge_label.size(0) == 6
+
+
+def test_random_link_split_with_to_sparse_tensor():
+    edge_index = torch.tensor([[0, 1, 1, 2, 2, 3, 3, 4, 4, 5],
+                               [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]])
+    data = Data(edge_index=edge_index, num_nodes=6)
+
+    transform = RandomLinkSplit(num_val=2, num_test=2, neg_sampling_ratio=0.0)
+    train_data1, _, _ = transform(data)
+    assert train_data1.edge_index.size(1) == train_data1.edge_label.size(0)
+
+    train_data2 = ToSparseTensor()(train_data1)
+    assert train_data1.edge_label.equal(train_data2.edge_label)
+    assert train_data1.edge_label_index.equal(train_data2.edge_label_index)
 
 
 def test_random_link_split_with_label():
@@ -288,3 +306,33 @@ def test_random_link_split_non_contiguous():
     train_data, val_data, test_data = transform(data)
     assert train_data['p', 'p'].num_edges == 60
     assert train_data['p', 'p'].edge_index.is_contiguous()
+
+
+@onlyOnline
+@onlyFullTest
+def test_random_link_split_on_dataset(get_dataset):
+    dataset = get_dataset(name='MUTAG')
+
+    dataset.transform = RandomLinkSplit(
+        num_val=0.1,
+        num_test=0.1,
+        disjoint_train_ratio=0.3,
+        add_negative_train_samples=False,
+    )
+
+    train_dataset, val_dataset, test_dataset = zip(*dataset)
+    assert len(train_dataset) == len(dataset)
+    assert len(val_dataset) == len(dataset)
+    assert len(test_dataset) == len(dataset)
+
+    assert isinstance(train_dataset[0], Data)
+    assert train_dataset[0].edge_label.min() == 1.0
+    assert train_dataset[0].edge_label.max() == 1.0
+
+    assert isinstance(val_dataset[0], Data)
+    assert val_dataset[0].edge_label.min() == 0.0
+    assert val_dataset[0].edge_label.max() == 1.0
+
+    assert isinstance(test_dataset[0], Data)
+    assert test_dataset[0].edge_label.min() == 0.0
+    assert test_dataset[0].edge_label.max() == 1.0
